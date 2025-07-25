@@ -37,18 +37,13 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
-# Constants
-OCR_ROOT = Path("D:/OCR")
-# ZIP_FILES = [
-#     OCR_ROOT / f"unit{i}.zip" for i in range(1, 7)
-# ]
-ZIP_FILES = [
-     OCR_ROOT / f"unit1.zip" 
- ]
+# Constants - Updated for new folder structure
+OCR_ROOT = Path("D:/OCR/ocr")
+ZIP_FILES = sorted(OCR_ROOT.glob("unit*.zip"))
 EXTRACT_DIR = OCR_ROOT / "temp_extracted"
 OUTPUT_DIR = OCR_ROOT / "output"
 MAX_WORKERS = 5
-MODEL_NAME = "gpt-4o"  # Using GPT-4 Omni model
+MODEL_NAME = "gpt-4o"
 
 # Ensure directories exist
 EXTRACT_DIR.mkdir(parents=True, exist_ok=True)
@@ -107,20 +102,18 @@ def save_checkpoint(checkpoint_file: Path, data: Dict) -> None:
 def get_system_prompt() -> str:
     """Load the system prompt with validation."""
     try:
-        # First try relative import
-        try:
-            from prompt import SYSTEM_PROMPT
-        except ImportError:
-            # Fallback to absolute path
-            sys.path.append(str(OCR_ROOT))
-            from prompt import SYSTEM_PROMPT
+        # Try importing directly from the same directory
+        from prompt import SYSTEM_PROMPT
             
         if not SYSTEM_PROMPT.strip():
             raise ValueError("Empty system prompt")
         return SYSTEM_PROMPT
+    except ImportError:
+        logger.error("System prompt not found in ocr/prompt.py")
+        raise
     except Exception as e:
-        logger.error(f"Failed to load system prompt: {str(e)}")
-        # Fallback prompt if loading fails
+        logger.error(f"Invalid system prompt: {str(e)}")
+        # Fallback prompt
         return """Extract text from slides and convert to Markdown with:
 - Accurate text extraction
 - Proper hierarchy (# for titles, - for bullets)
@@ -224,12 +217,12 @@ def save_markdown(unit_index: int, results: Dict[int, str]) -> Path:
             tmp_file.unlink()
         raise
 
-def process_unit(unit_index: int) -> None:
+def process_unit(zip_file: Path) -> None:
     """Complete unit processing pipeline."""
+    unit_index = int(''.join(filter(str.isdigit, zip_file.stem)))
     logger.info(f"🚀 Processing Unit {unit_index}...")
     
     try:
-        zip_file = ZIP_FILES[unit_index - 1]
         unit_folder = EXTRACT_DIR / f"unit_{unit_index}"
         checkpoint_file = OUTPUT_DIR / f"Unit-{unit_index}.json"
         
@@ -255,7 +248,7 @@ def process_unit(unit_index: int) -> None:
 
         # Process slides in parallel
         results = {}
-        if slide_infos:  # Only process if there are unprocessed slides
+        if slide_infos:
             with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
                 futures = [executor.submit(process_slide, info) for info in slide_infos]
                 for future in as_completed(futures):
@@ -285,11 +278,12 @@ def main():
         logger.info(f"Processing units from: {OCR_ROOT}")
         logger.info(f"Using model: {MODEL_NAME}")
         
-        for unit_index in range(1, len(ZIP_FILES) + 1):
+        # Process all unit*.zip files found in the directory
+        for zip_file in sorted(ZIP_FILES):
             try:
-                process_unit(unit_index)
+                process_unit(zip_file)
             except Exception as e:
-                logger.error(f"Unit {unit_index} failed, continuing with next: {str(e)}")
+                logger.error(f"Unit {zip_file.stem} failed, continuing with next: {str(e)}")
                 continue
         
         logger.info("All units processed successfully")
